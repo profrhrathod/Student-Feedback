@@ -1,10 +1,15 @@
 /**
  * Minimal service worker — required by browsers to allow "Install app".
- * Caches the app shell (this HTML page + icons) so the app still opens
- * (showing the sign-in screen) even with a flaky connection. Feedback
- * data itself always requires a live connection to the Google Sheet API.
+ * Uses a NETWORK-FIRST strategy: always tries to fetch the latest version
+ * from the server first, and only falls back to the cached copy if the
+ * network is unreachable (e.g. offline). This means updates you push to
+ * index.html show up immediately on next load, instead of being stuck
+ * behind a stale cache.
+ *
+ * IMPORTANT: bump CACHE_NAME (e.g. v2 -> v3) whenever you want to force
+ * every installed copy to fully discard its old cache.
  */
-const CACHE_NAME = 'student-feedback-shell-v1';
+const CACHE_NAME = 'student-feedback-shell-v2';
 const SHELL_FILES = [
   './index.html',
   './manifest.json',
@@ -33,17 +38,15 @@ self.addEventListener('fetch', (event) => {
   // Never cache API calls to the Apps Script backend — always go to network.
   if (url.hostname.includes('script.google.com')) return;
   if (event.request.method !== 'GET') return;
+  if (url.origin !== self.location.origin) return;
 
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const fetchPromise = fetch(event.request).then((networkResponse) => {
-        if (networkResponse && networkResponse.ok && url.origin === self.location.origin) {
-          const clone = networkResponse.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-        }
-        return networkResponse;
-      }).catch(() => cached);
-      return cached || fetchPromise;
-    })
+    fetch(event.request, { cache: 'no-store' }).then((networkResponse) => {
+      if (networkResponse && networkResponse.ok) {
+        const clone = networkResponse.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+      }
+      return networkResponse;
+    }).catch(() => caches.match(event.request))
   );
 });
