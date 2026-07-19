@@ -325,7 +325,9 @@
       <h2>Report Details</h2>
       <label>Institute Name (printed on reports)</label>
       <input type="text" id="setInstitute">
-      <label>Name of HoD (printed above signature line)</label>
+      <label>Name of Principal (printed above Principal's signature line)</label>
+      <input type="text" id="setPrincipal">
+      <label>Name of I/c HoD / Coordinator (printed above their signature line)</label>
       <input type="text" id="setHod">
       <button class="btn" onclick="saveGeneralSettings()">Save</button>
       <div id="setGenMsg"></div>
@@ -385,7 +387,7 @@ let currentUser = null; // {role, enrolNo, name}
 let loginRole = 'student';
 let facultyList = [];
 let studentsList = [];
-let settings = { instituteName: "Dr.Panjabrao Deshmukh Polytechnic, Amravati", hodName: "", adminUsername: "hod" };
+let settings = { instituteName: "Dr.Panjabrao Deshmukh Polytechnic, Amravati", hodName: "", principalName: "", adminUsername: "hod" };
 let activeFacultyForForm = null;
 let studentSelectedDept = null;
 let studentSelectedSem = null;
@@ -704,6 +706,7 @@ function setupAdminDropdowns(){
 async function renderAdminAll(){
   try{ await loadSettings(); }catch(err){ console.error('loadSettings failed', err); }
   document.getElementById('setInstitute').value = settings.instituteName;
+  document.getElementById('setPrincipal').value = settings.principalName || '';
   document.getElementById('setHod').value = settings.hodName;
   document.getElementById('setAdmUser').value = settings.adminUsername;
   await reloadAllFaculty();
@@ -1177,9 +1180,16 @@ async function downloadReportPDF(facultyId){
   const sigY = doc.internal.pageSize.getHeight() - 45;
   doc.setFont('helvetica','normal');
   doc.setFontSize(10);
+
+  // Principal — left side
+  doc.line(margin, sigY, margin + 170, sigY);
+  doc.text(settings.principalName || '\u00A0', margin, sigY + 13);
+  doc.text('Signature of Principal', margin, sigY + 26);
+
+  // I/c HoD / Coordinator — right side
   doc.line(pageWidth - margin - 170, sigY, pageWidth - margin, sigY);
-  doc.text(settings.hodName || 'Name of HoD', pageWidth - margin - 170, sigY + 13);
-  doc.text('Signature of HoD', pageWidth - margin - 170, sigY + 26);
+  doc.text(settings.hodName || '\u00A0', pageWidth - margin - 170, sigY + 13);
+  doc.text('Signature of I/c HOD / Coordinator', pageWidth - margin - 170, sigY + 26);
 
   const fname = ('Feedback_' + f.department + '_' + f.semester + '_' + f.name).replace(/[^a-z0-9]+/gi,'_') + '.pdf';
   doc.save(fname);
@@ -1189,11 +1199,13 @@ async function downloadReportPDF(facultyId){
 async function saveGeneralSettings(){
   const instituteName = document.getElementById('setInstitute').value.trim() || settings.instituteName;
   const hodName = document.getElementById('setHod').value.trim();
+  const principalName = document.getElementById('setPrincipal').value.trim();
   const msg = document.getElementById('setGenMsg');
   try{
-    await apiPost({ action:'saveSettings', instituteName, hodName });
+    await apiPost({ action:'saveSettings', instituteName, hodName, principalName });
     settings.instituteName = instituteName;
     settings.hodName = hodName;
+    settings.principalName = principalName;
     msg.innerHTML = '<div class="msg ok">Saved.</div>';
   }catch(err){
     msg.innerHTML = '<div class="msg error">' + escapeHtml(err.message) + '</div>';
