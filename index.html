@@ -221,7 +221,7 @@
       <input type="text" id="admUser" placeholder="Username">
       <label>Password</label>
       <input type="password" id="admPass" placeholder="Password">
-      <button class="btn" style="width:100%" onclick="loginAdmin()">Sign in as Admin</button>
+      <button class="btn" id="adminSignInBtn" style="width:100%" onclick="loginAdmin()">Sign in as Admin</button>
     </div>
 
     <div id="loginMsg"></div>
@@ -241,10 +241,11 @@
 <!-- STUDENT VIEW: faculty list -->
 <div id="view-student" class="container hidden">
   <div class="card">
-    <div class="breadcrumb"><a onclick="backToDeptPicker()">Departments</a> &rsaquo; <span id="deptCrumb"></span></div>
+    <div class="breadcrumb"><a id="deptCrumbLink" onclick="backToDeptPicker()">Departments</a><span id="deptCrumbSep"> &rsaquo; </span><span id="deptCrumb"></span></div>
     <div class="flex-between">
       <h2>Select a subject/faculty to rate</h2>
     </div>
+    <div id="rosterNote" class="msg ok hidden" style="margin-top:10px;"></div>
     <div class="sem-pills" id="semPills"></div>
     <div id="facultyGrid" class="faculty-grid" style="margin-top:14px;"></div>
   </div>
@@ -388,6 +389,7 @@ let settings = { instituteName: "Dr.Panjabrao Deshmukh Polytechnic, Amravati", h
 let activeFacultyForForm = null;
 let studentSelectedDept = null;
 let studentSelectedSem = null;
+let lockedToRoster = false;
 let reportSelectedDept = null;
 let reportSelectedSem = null;
 
@@ -446,45 +448,87 @@ function logout(){
   currentUser = null;
   document.getElementById('topbar').classList.add('hidden');
   document.getElementById('loginMsg').innerHTML='';
-  studentSelectedDept = null; studentSelectedSem = null;
+  studentSelectedDept = null; studentSelectedSem = null; lockedToRoster = false;
   showView('view-login');
 }
 
 // ---------- login ----------
+let studentLoginInProgress = false;
 async function loginStudent(){
+  if(studentLoginInProgress) return;
   const enrol = document.getElementById('stuEnrol').value.trim();
   const name = document.getElementById('stuName').value.trim();
   const msg = document.getElementById('loginMsg');
   if(!enrol || !name){ msg.innerHTML = '<div class="msg error">Please enter both enrolment number and name.</div>'; return; }
+  studentLoginInProgress = true;
+  msg.innerHTML = '<div class="subtle"><span class="spinner" style="border-color:var(--maroon);border-top-color:transparent;"></span>Checking your registration…</div>';
   currentUser = { role:'student', enrolNo: enrol, name: name };
-  msg.innerHTML='';
-  document.getElementById('topbar').classList.remove('hidden');
-  document.getElementById('whoAmI').textContent = name + ' (' + enrol + ')';
-  renderDeptPicker();
-  showView('view-student-dept');
+  try{
+    const data = await apiGet('findStudent', { enrolNo: enrol });
+    msg.innerHTML='';
+    document.getElementById('topbar').classList.remove('hidden');
+    document.getElementById('whoAmI').textContent = name + ' (' + enrol + ')';
+    if(data.found){
+      // Roster match: lock the student straight into their registered class, no picker.
+      lockedToRoster = true;
+      studentSelectedDept = data.student.department;
+      studentSelectedSem = data.student.semester;
+      document.getElementById('deptCrumb').textContent = studentSelectedDept;
+      await loadFacultyForDept(studentSelectedDept);
+      renderSemPills();
+      await renderStudentFacultyGrid();
+      showView('view-student');
+    } else {
+      // Not on any uploaded roster — fall back to manual department/semester selection.
+      lockedToRoster = false;
+      renderDeptPicker();
+      showView('view-student-dept');
+    }
+  }catch(err){
+    // Couldn't reach the roster check — don't block the student, let them pick manually.
+    lockedToRoster = false;
+    msg.innerHTML='';
+    document.getElementById('topbar').classList.remove('hidden');
+    document.getElementById('whoAmI').textContent = name + ' (' + enrol + ')';
+    renderDeptPicker();
+    showView('view-student-dept');
+  }finally{
+    studentLoginInProgress = false;
+  }
 }
 
+let adminLoginInProgress = false;
 async function loginAdmin(){
+  if(adminLoginInProgress) return; // ignore extra clicks while a check is already running
+  adminLoginInProgress = true;
+  const btn = document.getElementById('adminSignInBtn');
   const u = document.getElementById('admUser').value.trim();
   const p = document.getElementById('admPass').value;
   const msg = document.getElementById('loginMsg');
+  btn.disabled = true;
   msg.innerHTML = '<div class="subtle"><span class="spinner" style="border-color:var(--maroon);border-top-color:transparent;"></span>Checking credentials…</div>';
   try{
     const resp = await apiPost({ action:'login', username:u, password:p });
     if(resp.authenticated){
       currentUser = { role:'admin' };
+      if(resp.settings) settings = resp.settings;
       msg.innerHTML='';
       document.getElementById('topbar').classList.remove('hidden');
       document.getElementById('whoAmI').textContent = 'Admin (' + u + ')';
-      await loadSettings();
       setupAdminDropdowns();
-      await renderAdminAll();
+      // Show the admin dashboard right away — don't let a slow/failed data
+      // load block entry. renderAdminAll fills in the lists once ready and
+      // handles its own errors internally.
       showView('view-admin');
+      renderAdminAll().catch(err => console.error('renderAdminAll failed', err));
     } else {
       msg.innerHTML = '<div class="msg error">Incorrect username or password.</div>';
     }
   }catch(err){
     msg.innerHTML = '<div class="msg error">Could not reach the server: ' + escapeHtml(err.message) + '</div>';
+  }finally{
+    adminLoginInProgress = false;
+    btn.disabled = false;
   }
 }
 
@@ -505,6 +549,7 @@ function renderDeptPicker(){
 }
 
 async function selectDept(dept){
+  lockedToRoster = false;
   studentSelectedDept = dept;
   studentSelectedSem = SEMESTERS[0];
   document.getElementById('deptCrumb').textContent = dept;
@@ -515,17 +560,35 @@ async function selectDept(dept){
 }
 
 function backToDeptPicker(){
+  if(lockedToRoster) return; // registered students stay in their assigned class
   renderDeptPicker();
   showView('view-student-dept');
 }
 
 function renderSemPills(){
   const wrap = document.getElementById('semPills');
+  const crumbLink = document.getElementById('deptCrumbLink');
+  const crumbSep = document.getElementById('deptCrumbSep');
+  const note = document.getElementById('rosterNote');
+
+  if(lockedToRoster){
+    // Registered students see their assigned class only — no picker, no way back.
+    crumbLink.classList.add('hidden');
+    crumbSep.classList.add('hidden');
+    note.classList.remove('hidden');
+    note.textContent = `You're registered for ${studentSelectedDept} — ${studentSelectedSem}. Feedback here applies to this class only.`;
+    wrap.innerHTML = `<div class="sem-pill active" style="cursor:default;">${escapeHtml(studentSelectedSem)}</div>`;
+    return;
+  }
+  crumbLink.classList.remove('hidden');
+  crumbSep.classList.remove('hidden');
+  note.classList.add('hidden');
   wrap.innerHTML = SEMESTERS.map(s => `
     <div class="sem-pill ${s===studentSelectedSem?'active':''}" onclick="selectSem('${escapeHtml(s)}')">${escapeHtml(s)}</div>
   `).join('');
 }
 async function selectSem(sem){
+  if(lockedToRoster) return;
   studentSelectedSem = sem;
   renderSemPills();
   await renderStudentFacultyGrid();
@@ -639,6 +702,7 @@ function setupAdminDropdowns(){
 }
 
 async function renderAdminAll(){
+  try{ await loadSettings(); }catch(err){ console.error('loadSettings failed', err); }
   document.getElementById('setInstitute').value = settings.instituteName;
   document.getElementById('setHod').value = settings.hodName;
   document.getElementById('setAdmUser').value = settings.adminUsername;
