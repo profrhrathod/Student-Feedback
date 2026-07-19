@@ -1141,7 +1141,10 @@ async function downloadReportPDF(facultyId){
   const bannerW = pageWidth - margin*2;
   const bannerH = bannerW * (imgProps.h/imgProps.w);
   doc.addImage(BANNER_BASE64, 'PNG', margin, 20, bannerW, bannerH);
-  let y = 20 + bannerH + 14;
+  doc.setDrawColor(139, 26, 26); // maroon, matches the app theme
+  doc.setLineWidth(1.6);
+  doc.line(margin, 20 + bannerH, margin + bannerW, 20 + bannerH);
+  let y = 20 + bannerH + 18;
 
   doc.setFont('helvetica','bold');
   doc.setFontSize(20);
